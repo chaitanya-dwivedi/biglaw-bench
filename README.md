@@ -59,3 +59,21 @@ For access to the full dataset and additional resources, please contact Harvey d
 
 ## Credits
 [Julio Pereyra](https://www.linkedin.com/in/julio-pereyra-411738147), [Elizabeth Lebens](https://www.linkedin.com/in/beth-lebens-777847263), [Matthew Guillod](https://www.linkedin.com/in/matthew-guillod-284671116), [Laura Toulme](https://www.linkedin.com/in/laura-toulme-a6b66182), [Cameron MacGregor](https://www.linkedin.com/in/cameron-macgregor-396580164), [David Murdter](https://www.linkedin.com/in/davidmurdter), [Karl de la Roche](https://www.linkedin.com/in/karldelaroche), [Emilie McConnachie](https://www.linkedin.com/in/emilie-mcconnachie), [Jeremy Pushkin](https://www.linkedin.com/in/jeremypushkin), [Rina Kim](https://www.linkedin.com/in/rinakime), [Aaron Chan](https://www.linkedin.com/in/aaron-y-chan), [Jenny Pan](https://www.linkedin.com/in/jennyypan), [Boling Yang](https://www.linkedin.com/in/boling-yang-104534123), [Nan Wu](https://www.linkedin.com/in/nan-wu-41895bb7), [Niko Grupen](https://www.linkedin.com/in/nikogrupen), [Lauren Oh](https://www.linkedin.com/in/lauren-dayoun-oh), [Aatish Nayak](https://www.linkedin.com/in/aatishn), [Gabriel Pereyra](https://www.linkedin.com/in/gabepereyra)
+
+## Harbor Scenario 2 Parity Runner
+
+`parity_runner.py` provides a local Scenario 2 original-side parity harness covering all 16 public tasks (6 `blb-core` + 10 `blb-workflows/spa`) with symmetric instructions, workspace layout, CLI agent invocation (`codex` or `claude-code`), and verifier scoring (`JUDGE_API_KEY` / `JUDGE_BASE_URL` / `JUDGE_MODEL`).
+
+```bash
+# Dry-run validation across all 16 tasks (no agent/API calls)
+python3 parity_runner.py --split full --dry-run
+
+# Mock end-to-end check across all 16 tasks
+python3 parity_runner.py --split full --agent mock
+
+# Live parity run (e.g. codex@0.159.1)
+export JUDGE_API_KEY=...
+export JUDGE_BASE_URL=https://app.ppapi.ai/v1
+export JUDGE_MODEL=gpt-5-mini
+python3 parity_runner.py --split full --agent codex --model gpt-5-mini --runs 3
+```
