@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
+import concurrent.futures
 import csv
 from datetime import datetime
 import io
@@ -28,6 +29,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -576,11 +578,17 @@ def resolve_anthropic_base_url(raw: str | None) -> str:
     return base
 
 
-def build_agent_cmd(agent: str, model: str, prompt: str, workdir: Path) -> list[str]:  # noqa: ARG001
+def build_agent_cmd(
+    agent: str,
+    model: str,
+    prompt: str,
+    workdir: Path,  # noqa: ARG001
+    reasoning_effort: str | None = None,
+) -> list[str]:
     """Build the exact CLI command matching Harbor's installed codex and claude-code wrappers."""
     resolved_model = resolve_cli_model(model)
     if agent == "codex":
-        return [
+        cmd = [
             "codex",
             "exec",
             "--dangerously-bypass-approvals-and-sandbox",
@@ -590,9 +598,11 @@ def build_agent_cmd(agent: str, model: str, prompt: str, workdir: Path) -> list[
             "--json",
             "--enable",
             "unified_exec",
-            "--",
-            prompt,
         ]
+        if reasoning_effort:
+            cmd.extend(["-c", f"model_reasoning_effort={reasoning_effort}"])
+        cmd.extend(["--", prompt])
+        return cmd
     if agent == "claude-code":
         # Harbor pipes instruction via stdin (`printf "%s" ... | claude ... --print`)
         return [
@@ -613,6 +623,12 @@ def prepare_agent_env(
 ) -> dict[str, str]:
     """Build isolated env + config files matching Harbor's codex.py / claude_code.py wrappers."""
     env = dict(os.environ if base_env is None else base_env)
+    homebrew_bin = "/opt/homebrew/bin"
+    if Path(homebrew_bin).is_dir():
+        cur_path = env.get("PATH", "")
+        parts = [p for p in cur_path.split(os.pathsep) if p]
+        if homebrew_bin not in parts:
+            env["PATH"] = os.pathsep.join([homebrew_bin, *parts]) if parts else homebrew_bin
     resolved_model = resolve_cli_model(model)
 
     if agent == "codex":
@@ -663,6 +679,7 @@ def run_single_task(
     model: str,
     dry_run: bool = False,
     timeout_sec: int = DEFAULT_AGENT_TIMEOUT_SEC,
+    reasoning_effort: str | None = None,
 ) -> dict:
     with (
         tempfile.TemporaryDirectory(prefix=f"blb_{task['id']}_") as tmp,
@@ -683,7 +700,13 @@ def run_single_task(
 
         if dry_run:
             effective_agent = "codex" if agent == "mock" else agent
-            cmd = build_agent_cmd(effective_agent, model, "<PROMPT>", workdir)
+            cmd = build_agent_cmd(
+                effective_agent,
+                model,
+                "<PROMPT>",
+                workdir,
+                reasoning_effort=reasoning_effort,
+            )
             agent_env = prepare_agent_env(effective_agent, model, agent_home)
             if task["kind"] == "core":
                 pos, neg = parse_rubric(task["rubric"])
@@ -714,61 +737,46 @@ def run_single_task(
                 score = score_task(task, out_path, judge=lambda _p: {"fields": {}})
             return {"task_id": task["id"], "kind": task["kind"], "score": score, "status": "mock_ok"}
 
-        cmd = build_agent_cmd(agent, model, prompt, workdir)
+        cmd = build_agent_cmd(agent, model, prompt, workdir, reasoning_effort=reasoning_effort)
         agent_env = prepare_agent_env(agent, model, agent_home)
-        proc = subprocess.run(
-            cmd,
-            cwd=workdir,
-            env=agent_env,
-            input=(prompt if agent == "claude-code" else None),
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-        )
+        t0 = time.monotonic()
+        timed_out = False
+        returncode = -1
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=workdir,
+                env=agent_env,
+                input=(prompt if agent == "claude-code" else None),
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+            )
+            returncode = proc.returncode
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            returncode = -1
         score = score_task(task, out_path)
+        elapsed_sec = round(time.monotonic() - t0, 2)
+        status = "timed_out" if timed_out else ("ok" if out_path.exists() else "missing_output")
         return {
             "task_id": task["id"],
             "kind": task["kind"],
-            "returncode": proc.returncode,
+            "returncode": returncode,
+            "timed_out": timed_out,
+            "elapsed_sec": elapsed_sec,
             "score": score,
-            "status": "ok" if out_path.exists() else "missing_output",
+            "status": status,
         }
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="BigLaw Bench Scenario 2 original-side parity runner")
-    ap.add_argument("--split", choices=["full", "core", "spa"], default="full")
-    ap.add_argument("--task-ids", nargs="+", default=None)
-    ap.add_argument("--limit", type=int, default=None)
-    ap.add_argument("--agent", choices=["codex", "claude-code", "mock"], default="codex")
-    ap.add_argument("--model", default="gpt-5-mini")
-    ap.add_argument("--runs", type=int, default=1)
-    ap.add_argument("--timeout", type=int, default=DEFAULT_AGENT_TIMEOUT_SEC)
-    ap.add_argument("--output-dir", type=Path, default=REPO_ROOT / "parity_results")
-    ap.add_argument("--dry-run", action="store_true", help="Validate tasks/prompts without invoking agent or judge")
-    args = ap.parse_args()
-
-    tasks = load_tasks(split=args.split, task_ids=args.task_ids, limit=args.limit)
-    print(f"Loaded {len(tasks)} tasks (split={args.split}, agent={args.agent}, model={args.model}, dry_run={args.dry_run})")
-
-    run_means = []
-    all_runs = []
-    for run_idx in range(1, args.runs + 1):
-        results = [run_single_task(t, args.agent, args.model, dry_run=args.dry_run, timeout_sec=args.timeout) for t in tasks]
-        all_runs.append({"run": run_idx, "results": results})
-        if not args.dry_run:
-            mean_score = sum(r["score"] for r in results) / len(results)
-            run_means.append(mean_score)
-            print(f"Run {run_idx}/{args.runs}: mean={mean_score:.4f} ({len(results)} tasks)")
-        else:
-            print(f"Dry-run {run_idx}/{args.runs}: validated {len(results)} tasks")
-
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+def _write_summary(args, tasks: list[dict], run_means: list[float], all_runs: list[dict]) -> Path:
     summary = {
         "split": args.split,
         "agent": args.agent,
         "model": args.model,
         "resolved_model": resolve_cli_model(args.model),
+        "reasoning_effort": args.reasoning_effort,
         "timeout_sec": args.timeout,
         "judge_base_url": os.environ.get("JUDGE_BASE_URL", DEFAULT_JUDGE_BASE_URL).rstrip("/"),
         "judge_model": os.environ.get("JUDGE_MODEL", DEFAULT_JUDGE_MODEL),
@@ -782,10 +790,96 @@ def main() -> int:
         sem = statistics.stdev(run_means) / (len(run_means) ** 0.5)
         summary["mean"] = mean
         summary["sample_sem"] = sem
-        print(f"Aggregate: {mean:.4f} +/- {sem:.4f}")
     out_file = args.output_dir / ("dry_run.json" if args.dry_run else "parity_summary.json")
     out_file.write_text(json.dumps(summary, indent=2))
-    print(f"Wrote {out_file}")
+    return out_file
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="BigLaw Bench Scenario 2 original-side parity runner")
+    ap.add_argument("--split", choices=["full", "core", "spa"], default="full")
+    ap.add_argument("--task-ids", nargs="+", default=None)
+    ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--agent", choices=["codex", "claude-code", "mock"], default="codex")
+    ap.add_argument("--model", default="gpt-5-mini")
+    ap.add_argument(
+        "--reasoning-effort",
+        choices=["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+        default=None,
+    )
+    ap.add_argument("--concurrency", type=int, default=1)
+    ap.add_argument("--runs", type=int, default=1)
+    ap.add_argument("--timeout", type=int, default=DEFAULT_AGENT_TIMEOUT_SEC)
+    ap.add_argument("--output-dir", type=Path, default=REPO_ROOT / "parity_results")
+    ap.add_argument("--dry-run", action="store_true", help="Validate tasks/prompts without invoking agent or judge")
+    args = ap.parse_args()
+
+    tasks = load_tasks(split=args.split, task_ids=args.task_ids, limit=args.limit)
+    print(
+        f"Loaded {len(tasks)} tasks (split={args.split}, agent={args.agent}, model={args.model}, "
+        f"reasoning_effort={args.reasoning_effort}, concurrency={args.concurrency}, dry_run={args.dry_run})",
+        flush=True,
+    )
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    run_means = []
+    all_runs = []
+    for run_idx in range(1, args.runs + 1):
+        if args.concurrency > 1 and not args.dry_run and len(tasks) > 1:
+            results_by_idx: dict[int, dict] = {}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+                fut_map = {
+                    pool.submit(
+                        run_single_task,
+                        t,
+                        args.agent,
+                        args.model,
+                        dry_run=False,
+                        timeout_sec=args.timeout,
+                        reasoning_effort=args.reasoning_effort,
+                    ): (idx, t["id"])
+                    for idx, t in enumerate(tasks)
+                }
+                for fut in concurrent.futures.as_completed(fut_map):
+                    idx, tid = fut_map[fut]
+                    res = fut.result()
+                    results_by_idx[idx] = res
+                    print(
+                        f"  [run {run_idx}/{args.runs}] {tid}: status={res['status']} score={res['score']:.4f} elapsed={res.get('elapsed_sec')}s",
+                        flush=True,
+                    )
+            results = [results_by_idx[i] for i in range(len(tasks))]
+        else:
+            results = []
+            for t in tasks:
+                res = run_single_task(
+                    t,
+                    args.agent,
+                    args.model,
+                    dry_run=args.dry_run,
+                    timeout_sec=args.timeout,
+                    reasoning_effort=args.reasoning_effort,
+                )
+                results.append(res)
+                if not args.dry_run:
+                    print(
+                        f"  [run {run_idx}/{args.runs}] {t['id']}: status={res['status']} score={res['score']:.4f} elapsed={res.get('elapsed_sec')}s",
+                        flush=True,
+                    )
+        all_runs.append({"run": run_idx, "results": results})
+        if not args.dry_run:
+            mean_score = sum(r["score"] for r in results) / len(results)
+            run_means.append(mean_score)
+            print(f"Run {run_idx}/{args.runs}: mean={mean_score:.4f} ({len(results)} tasks)", flush=True)
+        else:
+            print(f"Dry-run {run_idx}/{args.runs}: validated {len(results)} tasks", flush=True)
+        out_file = _write_summary(args, tasks, run_means, all_runs)
+
+    if len(run_means) >= 2:
+        mean = statistics.mean(run_means)
+        sem = statistics.stdev(run_means) / (len(run_means) ** 0.5)
+        print(f"Aggregate: {mean:.4f} +/- {sem:.4f}", flush=True)
+    print(f"Wrote {out_file}", flush=True)
     return 0
 
 

@@ -241,12 +241,33 @@ def test_cli_flags_and_env_symmetry(tmp_path):
         "--print",
     ]
 
+    codex_cmd_effort = parity_runner.build_agent_cmd(
+        "codex", "openai/gpt-5-mini", "hello", tmp_path, reasoning_effort="low"
+    )
+    assert codex_cmd_effort == [
+        "codex",
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+        "--model",
+        "gpt-5-mini",
+        "--json",
+        "--enable",
+        "unified_exec",
+        "-c",
+        "model_reasoning_effort=low",
+        "--",
+        "hello",
+    ]
+
     codex_env = parity_runner.prepare_agent_env(
         "codex",
         "openai/gpt-5-mini",
         tmp_path / "cx",
-        base_env={"OPENAI_API_KEY": "sk-test", "CODEX_API_KEY": "stale"},
+        base_env={"OPENAI_API_KEY": "sk-test", "CODEX_API_KEY": "stale", "PATH": "/usr/bin"},
     )
+    if Path("/opt/homebrew/bin").is_dir():
+        assert "/opt/homebrew/bin" in codex_env["PATH"].split(":")
     assert codex_env["OPENAI_BASE_URL"] == "https://app.ppapi.ai/v1"
     assert codex_env["OPENAI_API_KEY"] == "sk-test"
     assert codex_env["CODEX_API_KEY"] == ""
@@ -285,3 +306,27 @@ def test_dry_run_and_mock_all_16_tasks():
         mock = parity_runner.run_single_task(task, "mock", "gpt-5-mini", dry_run=False)
         assert mock["status"] == "mock_ok"
         assert mock["score"] == 1.0
+
+
+def test_timeout_expired_still_scores_output_and_records_status(monkeypatch):
+    """If subprocess.run times out after writing answer.json, parity_runner still scores it cleanly."""
+    import subprocess
+
+    spa_task = next(t for t in parity_runner.load_tasks("spa") if t["id"] == "blb-spa-001")
+
+    def fake_run(cmd, cwd, **kwargs):
+        (Path(cwd) / "answer.json").write_text(json.dumps(spa_task["ground_truth"]))
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=1)
+
+    monkeypatch.setattr(parity_runner.subprocess, "run", fake_run)
+    res = parity_runner.run_single_task(
+        spa_task,
+        "codex",
+        "openai/gpt-5-mini",
+        timeout_sec=1,
+        reasoning_effort="low",
+    )
+    assert res["timed_out"] is True
+    assert res["returncode"] == -1
+    assert res["status"] == "timed_out"
+    assert res["score"] == 1.0
