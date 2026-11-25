@@ -357,7 +357,7 @@ def call_judge(prompt: str) -> dict:
     url = base + "/chat/completions" if base.endswith("/v1") else base + "/v1/chat/completions"
     body = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}]}).encode()
     req = urllib.request.Request(url, data=body, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with urllib.request.urlopen(req, timeout=180) as r:
         content = json.load(r)["choices"][0]["message"]["content"]
     m = re.search(r"\{.*\}", content, re.S)
     return json.loads(m.group(0))
@@ -504,13 +504,15 @@ def score_spa(ground_truth: dict, prediction: dict, judge=None) -> tuple[float, 
         verdict = None
         last_err = None
         prompt = build_spa_prompt(pending)
-        for attempt in range(3):
+        for attempt in range(6):
             try:
                 verdict = judge(prompt)
                 break
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 print(f"judge attempt {attempt+1} failed: {e}", file=sys.stderr)
+                if attempt < 5:
+                    time.sleep(min(2 * (attempt + 1), 10))
         if verdict is None:
             raise RuntimeError(f"judge unavailable: {last_err}")
         judged_fields = verdict.get("fields", {})
@@ -532,13 +534,15 @@ def score_task(task: dict, out_path: Path, judge=call_judge) -> float:
         prompt = build_prompt(pos, neg, ans)
         verdict = None
         last_err = None
-        for attempt in range(3):
+        for attempt in range(6):
             try:
                 verdict = judge(prompt)
                 break
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 print(f"judge attempt {attempt+1} failed: {e}", file=sys.stderr)
+                if attempt < 5:
+                    time.sleep(min(2 * (attempt + 1), 10))
         if verdict is None:
             raise RuntimeError(f"judge unavailable: {last_err}")
         return compute_score(pos, neg, verdict)
