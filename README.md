@@ -74,9 +74,9 @@ python3 parity_runner.py --split full --agent mock
 # Live parity run (verified 3×16 with codex@0.159.1 + openai/gpt-5.4)
 # Original: 0.6016 ± 0.0087 ([0.6153, 0.5854, 0.6042]) vs Harbor: 0.6284 ± 0.0178 ([0.6062, 0.6154, 0.6637])
 export OPENAI_API_KEY=...
-export OPENAI_BASE_URL=https://app.ppapi.ai/v1
+export OPENAI_BASE_URL=https://api.openai.com/v1   # optional; override for any OpenAI-compatible gateway
 export JUDGE_API_KEY=...
-export JUDGE_BASE_URL=https://app.ppapi.ai/v1
+export JUDGE_BASE_URL=https://api.openai.com/v1    # optional; override for any OpenAI-compatible gateway
 export JUDGE_MODEL=gpt-5.4
 python3 parity_runner.py \
   --split full --agent codex --model openai/gpt-5.4 --reasoning-effort low \

@@ -36,9 +36,9 @@ REPO_ROOT = Path(__file__).resolve().parent
 CORE_DIR = REPO_ROOT / "blb-core"
 SPA_DIR = REPO_ROOT / "blb-workflows" / "spa"
 
-DEFAULT_OPENAI_BASE_URL = "https://app.ppapi.ai/v1"
-DEFAULT_ANTHROPIC_BASE_URL = "https://app.ppapi.ai"
-DEFAULT_JUDGE_BASE_URL = "https://app.ppapi.ai/v1"
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com"
+DEFAULT_JUDGE_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_JUDGE_MODEL = "gpt-5-mini"
 DEFAULT_AGENT_TIMEOUT_SEC = 1800
 

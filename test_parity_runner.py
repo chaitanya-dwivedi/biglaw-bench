@@ -225,7 +225,7 @@ def test_spa_scorers_identical_on_mock_verdicts(tmp_path):
 
 
 def test_cli_flags_and_env_symmetry(tmp_path):
-    """CLI commands and env vars match Harbor's codex and claude-code wrappers and ppapi endpoints."""
+    """CLI commands and env vars match Harbor's codex and claude-code wrappers and OpenAI/Anthropic endpoints."""
     codex_cmd = parity_runner.build_agent_cmd("codex", "openai/gpt-5-mini", "hello", tmp_path)
     assert codex_cmd == [
         "codex",
@@ -277,20 +277,20 @@ def test_cli_flags_and_env_symmetry(tmp_path):
     )
     if Path("/opt/homebrew/bin").is_dir():
         assert "/opt/homebrew/bin" in codex_env["PATH"].split(":")
-    assert codex_env["OPENAI_BASE_URL"] == "https://app.ppapi.ai/v1"
+    assert codex_env["OPENAI_BASE_URL"] == "https://api.openai.com/v1"
     assert codex_env["OPENAI_API_KEY"] == "sk-test"
     assert codex_env["CODEX_API_KEY"] == ""
     codex_home = Path(codex_env["CODEX_HOME"])
     assert json.loads((codex_home / "auth.json").read_text()) == {"OPENAI_API_KEY": "sk-test"}
-    assert 'openai_base_url = "https://app.ppapi.ai/v1"' in (codex_home / "config.toml").read_text()
+    assert 'openai_base_url = "https://api.openai.com/v1"' in (codex_home / "config.toml").read_text()
 
     claude_env = parity_runner.prepare_agent_env(
         "claude-code",
         "anthropic/claude-sonnet-4-6",
         tmp_path / "cc",
-        base_env={"ANTHROPIC_AUTH_TOKEN": "tok-test", "ANTHROPIC_BASE_URL": "https://app.ppapi.ai/v1"},
+        base_env={"ANTHROPIC_AUTH_TOKEN": "tok-test", "ANTHROPIC_BASE_URL": "https://api.anthropic.com/v1"},
     )
-    assert claude_env["ANTHROPIC_BASE_URL"] == "https://app.ppapi.ai"
+    assert claude_env["ANTHROPIC_BASE_URL"] == "https://api.anthropic.com"
     assert claude_env["ANTHROPIC_MODEL"] == "claude-sonnet-4-6"
     assert claude_env["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "claude-sonnet-4-6"
     assert claude_env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-sonnet-4-6"
@@ -310,7 +310,7 @@ def test_dry_run_and_mock_all_16_tasks():
     for task in tasks:
         dry = parity_runner.run_single_task(task, "codex", "gpt-5-mini", dry_run=True)
         assert dry["status"] == "dry_run_ok"
-        assert dry["base_url"] == "https://app.ppapi.ai/v1"
+        assert dry["base_url"] == "https://api.openai.com/v1"
 
         mock = parity_runner.run_single_task(task, "mock", "gpt-5-mini", dry_run=False)
         assert mock["status"] == "mock_ok"
