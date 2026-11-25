@@ -504,15 +504,15 @@ def score_spa(ground_truth: dict, prediction: dict, judge=None) -> tuple[float, 
         verdict = None
         last_err = None
         prompt = build_spa_prompt(pending)
-        for attempt in range(6):
+        for attempt in range(16):
             try:
                 verdict = judge(prompt)
                 break
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 print(f"judge attempt {attempt+1} failed: {e}", file=sys.stderr)
-                if attempt < 5:
-                    time.sleep(min(2 * (attempt + 1), 10))
+                if attempt < 15:
+                    time.sleep(min(1.5 * (attempt + 1), 5.0))
         if verdict is None:
             raise RuntimeError(f"judge unavailable: {last_err}")
         judged_fields = verdict.get("fields", {})
@@ -534,15 +534,15 @@ def score_task(task: dict, out_path: Path, judge=call_judge) -> float:
         prompt = build_prompt(pos, neg, ans)
         verdict = None
         last_err = None
-        for attempt in range(6):
+        for attempt in range(16):
             try:
                 verdict = judge(prompt)
                 break
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 print(f"judge attempt {attempt+1} failed: {e}", file=sys.stderr)
-                if attempt < 5:
-                    time.sleep(min(2 * (attempt + 1), 10))
+                if attempt < 15:
+                    time.sleep(min(1.5 * (attempt + 1), 5.0))
         if verdict is None:
             raise RuntimeError(f"judge unavailable: {last_err}")
         return compute_score(pos, neg, verdict)
