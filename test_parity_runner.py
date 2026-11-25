@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import shlex
 import sys
 
 import pytest
@@ -83,11 +84,19 @@ def test_all_16_tasks_present_and_prompt_identical(tmp_path):
         assert local_prompt.replace(str(local_workdir), "/app") == harbor_instruction
         assert local_out.name == expected_out.name
 
-        # 3) Attached documents and schema / ground_truth match Harbor task files
+        # 3) Dockerfile build-time downloads and schema / ground_truth match Harbor task files
+        assert not list((task_dir / "environment").rglob("*.pdf")), f"PDF should not be bundled in {tid}"
+        dockerfile_text = (task_dir / "environment" / "Dockerfile").read_text(encoding="utf-8")
+        tokens = shlex.split(dockerfile_text.replace("\\\n", " "))
+        downloaded_targets = [
+            tokens[i + 1]
+            for i in range(len(tokens) - 1)
+            if tokens[i] == "-o"
+        ]
         harbor_docs = sorted(
-            p.name
-            for p in (task_dir / "environment" / "documents").iterdir()
-            if p.is_file() and p.suffix.lower() == ".pdf"
+            t.removeprefix("/app/documents/")
+            for t in downloaded_targets
+            if t.startswith("/app/documents/")
         )
         runner_docs = sorted(d.name for d in task["docs"])
         assert runner_docs == harbor_docs
@@ -95,7 +104,7 @@ def test_all_16_tasks_present_and_prompt_identical(tmp_path):
             assert d.is_file()
 
         if task["kind"] == "spa":
-            assert task["schema_path"].read_bytes() == (task_dir / "environment" / "schema.json").read_bytes()
+            assert "/app/schema.json" in downloaded_targets
             harbor_gt = json.loads((task_dir / "tests" / "ground_truth.json").read_text(encoding="utf-8"))
             assert task["ground_truth"] == harbor_gt
 

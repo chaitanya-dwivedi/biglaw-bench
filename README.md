@@ -71,9 +71,14 @@ python3 parity_runner.py --split full --dry-run
 # Mock end-to-end check across all 16 tasks
 python3 parity_runner.py --split full --agent mock
 
-# Live parity run (e.g. codex@0.159.1)
+# Live parity run (verified 3×16 with codex@0.159.1 + openai/gpt-5.4)
+# Original: 0.6016 ± 0.0087 ([0.6153, 0.5854, 0.6042]) vs Harbor: 0.6284 ± 0.0178 ([0.6062, 0.6154, 0.6637])
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=https://app.ppapi.ai/v1
 export JUDGE_API_KEY=...
 export JUDGE_BASE_URL=https://app.ppapi.ai/v1
-export JUDGE_MODEL=gpt-5-mini
-python3 parity_runner.py --split full --agent codex --model gpt-5-mini --runs 3
+export JUDGE_MODEL=gpt-5.4
+python3 parity_runner.py \
+  --split full --agent codex --model openai/gpt-5.4 --reasoning-effort low \
+  --concurrency 2 --runs 1 --output-dir parity_results/full_codex_gpt54_run1
 ```
